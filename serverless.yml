@@ -11,17 +11,163 @@ functions:
     handler: index.handler
 resources:
   Resources:
+    MinecraftServerDNS:
+      DependsOn:
+        - MinecraftServerEIP
+      Type: AWS::Route53::RecordSet
+      Properties:
+        HostedZoneId: Z003593719N1GIVWK6JKY
+        Name: minecraft.emilioppv.com
+        Type: A
+        TTL: '300'
+        ResourceRecords:
+          - !Ref MinecraftServerEIP
+    MinecraftServerEIP:
+      DepensOn:
+        - MinecraftServer
+      Type: AWS::EC2::EIP
+      Properties:
+        InstanceId: !Ref MinecraftServer
+        NetworkBorderGroup: us-east-1
+        Tags:
+          - Key: Minecraft Server
+            Value: Elastic IP
+    MinecraftServerBackupsBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: empobla-minecraft-server-backups
+        Tags:
+          - Key: Minecraft Server
+            Value: S3 Backups Bucket
+    MinecraftServerRole:
+      DependsOn:
+        - MinecraftServerBackupsBucket
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          RoleName: 
+            Fn::Join:
+              - ''
+              - - Ref: AWS::Region
+                - '-'
+                - minecraft-server-role
+          Description: Role for Minecraft Server EC2 Instance
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: ec2.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: minecraft-server-backups-policy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - s3:ListBucket
+                    - s3:ListBucketVersions
+                    - s3:PutObject
+                    - s3:PutObjectVersionTagging
+                    - s3:PutObjectTagging
+                  Resource:
+                    - Fn::Join:
+                      - ''
+                      - - 'arn:aws:s3:::'
+                        - Ref: MinecraftServerBackupsBucket
+                    - Fn::Join:
+                      - ''
+                      - - 'arn:aws:s3:::'
+                        - Ref: MinecraftServerBackupsBucket
+                        - '/*'
+          - PolicyName: minecraft-server-stop-policy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action: ec2:StopInstances
+                  Resource: '*'
+                  Condition:
+                    StringEquals:
+                      ec2:ResourceTag/Name: Minecraft Server
+        Tags:
+          - Key: Minecraft Server
+            Value: EC2 Role
+    MinecraftServerProfile:
+      DependsOn:
+        - MinecraftServerRole
+      Type: AWS::IAM::InstanceProfile
+      Properties:
+        Roles:
+          - !Ref MinecraftServerRole
+    MinecraftServerVolume:
+      Type: AWS::EC2::Volume
+      Properties:
+        AvailabilityZone: us-east-1b
+        Size: 8
+        VolumeType: gp3
+        Tags:
+          - Key: Minecraft Server
+            Value: EC2 Volume
+    MinecraftServerSecurityGroup:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: Security group with ports open for MC Server & SSH
+        GroupName: Minecraft Server Security Group
+        SecurityGroupEgress:
+          - Description: Allow all traffic out
+            IpProtocol: -1
+            CidrIp: '0.0.0.0/0'
+        SecurityGroupIngress:
+          - Description: us-east-1 EC2 Instance Connect
+            IpProtocol: tcp
+            FromPort: 22
+            ToPort: 22
+            CidrIp: '18.206.107.24/29'
+          - Description: Open SSH Connection
+            IpProtocol: tcp
+            FromPort: 22
+            ToPort: 22
+            CidrIp: '0.0.0.0/0'
+          - Description: Allow Minecraft Connections
+            IpProtocol: tcp
+            FromPort: 25565
+            ToPort: 25565
+            CidrIp: '0.0.0.0/0'
+        Tags:
+          - Key: Minecraft Server
+            Value: EC2 Security Group
+    MinecraftKeyPair:
+      Type: AWS::EC2::KeyPair
+      Properties:
+        KeyFormat: pem
+        KeyName: mcserver
+        KeyType: rsa
+        Tags:
+          - Key: Minecraft Server
+            Value: EC2 Key Pair
     MinecraftServer:
+      DependsOn:
+        - MinecraftServerProfile
+        - MinecraftServerVolume
+        - MinecraftServerSecurityGroup
       Type: AWS::EC2::Instance
       Properties:
+        AvailabilityZone: us-east-1b
+        IamInstanceProfile: !Ref MinecraftServerProfile
         ImageId: ami-07ce5684ee3b5482c
         InstanceType: t3.large
         KeyName: mcserver
-        SecurityGroups:
+        SecurityGroupIds:
           - Ref: MinecraftServerSecurityGroup
         Tags:
           - Key: Minecraft Server
             Value: EC2 Instance
+          - Key: Name
+            Value: Minecraft Server
+        Volumes:
+          - Device: /dev/xvda
+            VolumeId: !GetAtt MinecraftServerVolume.VolumeId
         UserData:
           Fn::Base64: !Sub |
             #!/bin/bash
@@ -60,55 +206,44 @@ resources:
             # Download server jar file from Minecraft official website
             wget $MINECRAFTSERVERURL
 
+            # Download server scripts
+            git clone https://github.com/empobla/Minecraft-Server.git setup
+
+            # Move scripts to their appropriate locations
+            mv setup/start start
+            mv setup/stop stop
+            
+            mkdir backup
+            mkdir backup/logs
+            mv setup/backup backup
+            
+            mkdir setup/autoshutdown/logs
+            mv setup/autoshutdown autoshutdown
+
+            mv setup/minecraft.service /etc/systemd/system/minecraft.service
+            mv setup/autoshutdown.service /etc/systemd/system/autoshutdown.service
+
+            # Add execution permissions to the scripts
+            chmod +x start stop backup/backup autoshutdown/autoshutdown
+            sleep 1
+
             # Generate Minecraft server files and create script
             chown -R minecraft:minecraft /opt/minecraft/
-            java -Xmx7000M -Xms7000M -jar server.jar nogui
+            ./start
             sleep 40
 
             # Accept EULA
             sed -i 's/false/true/p' eula.txt
 
-            # Create a script to start the server
-            touch start
-            printf '#!/bin/bash\njava -Xmx7000M -Xms7000M -jar server.jar nogui\n' >> start
-            chmod +x start
-            sleep 1
+            # Create auto-backup cron job
+            (crontab -l 2>/dev/null; echo '0 8 * * * /usr/bin/sh /opt/minecraft/server/backup/backup >> "/opt/minecraft/server/backup/logs/backup_$(/usr/bin/date +\%Y\%m\%d_\%H_\%M).log" 2>&1') | crontab -u minecraft -
 
-            # Create a script to stop the server
-            touch stop
-            printf '#!/bin/bash\nkill -9 $(ps -ef | pgrep -f "java")\n' >> stop
-            chmod +x stop
-            sleep 1
+            # Allow minecraft user to stop minecraft server without sudo
+            printf '\nminecraft ALL=(root) NOPASSWD:/usr/bin/systemctl stop minecraft.service\n' >> /etc/sudoers.d/90-cloud-init-users
 
-            # Create a script to back up the minecraft world
-            mkdir backup
-            mkdir backup/logs
-            touch backupscript
-            printf '#!/bin/bash\nFILENAME=backup_$(date +%%Y%%m%%d_%%H_%%M).zip\nzip -r $FILENAME /opt/minecraft/server/world\naws s3 cp $FILENAME s3://empobla-minecraft-server-backups/$FILENAME\nrm -rf $FILENAME\n' >> backupscript
-            chmod +x backupscript
-            sleep 1
-            mv backupscript backup/backup
-
-            # Create a script to shut down the server automatically when empty
-            mkdir autoshutdown
-            mkdir autoshutdown/logs
-            cd autoshutdown
-            touch package.json
-            printf '{\n  "type": "module"\n  }\n}\n' >> package.json
-            npm install minecraftstatuspinger
-            touch countplayers.js
-
-            # Create SystemD Script to run Minecraft server jar on reboot
-            cd /etc/systemd/system/
-            touch minecraft.service
-            printf '[Unit]\nDescription=Minecraft Server on start up\nWants=network-online.target\n[Service]\nType=forking\nUser=minecraft\nWorkingDirectory=/opt/minecraft/server\nExecStart=/usr/bin/screen -dmS minecraft /opt/minecraft/server/start\nExecReload=/usr/bin/screen -p 0 -S minecraft -X eval '\''stuff "reload"\\\\015'\''\nExecStop=/usr/bin/screen -p 0 -S minecraft -X eval '\''stuff "say Shutting down in 10 seconds..."\\\\015'\''\nExecStop=/usr/bin/screen -p 0 -S minecraft -X eval '\''stuff "save-all"\\\\015'\''\nExecStop=/usr/bin/sleep 10\nExecStop=/opt/minecraft/server/stop\nExecStop=/usr/bin/bash -c '\''/opt/minecraft/server/backup/backup >> /opt/minecraft/server/backup/logs/backup_$$(date +%%%%Y%%%%m%%%%d_%%%%H_%%%%M).log 2>&1'\''\n[Install]\nWantedBy=multi-user.target\n' >> minecraft.service
-
-    MinecraftServerSecurityGroup:
-      Type: AWS::EC2::SecurityGroup
-      Properties:
-        GroupDescription: Enable SSH access via port 22
-        SecurityGroupIngress:
-          - IpProtocol: tcp
-            FromPort: '22'
-            ToPort: '22'
-            CidrIp:
+            # Enable and start SystemD services
+            sudo systemctl daemon-reload
+            sudo systemctl enable minecraft.service
+            sudo systemctl enable autoshutdown.service
+            sudo systemctl start minecraft.service
+            sudo systemctl start autoshutdown.service

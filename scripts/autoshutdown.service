@@ -1,0 +1,9 @@
+[Unit]
+Description=Minecraft Server Status Auto Shutdown
+Wants=network-online.target
+[Service]
+User=minecraft
+WorkingDirectory=/opt/minecraft/server/autoshutdown
+ExecStart=/usr/bin/sh /opt/minecraft/server/autoshutdown/autoshutdown.sh >> /opt/minecraft/server/autoshutdown/logs/$$(date +%%Y%%m%%d).log 2>&1
+[Install]
+WantedBy=multi-user.target
