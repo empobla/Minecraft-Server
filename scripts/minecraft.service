@@ -1,0 +1,16 @@
+[Unit]
+Description=Minecraft Server on start up
+Wants=network-online.target
+[Service]
+Type=forking
+User=minecraft
+WorkingDirectory=/opt/minecraft/server
+ExecStart=/usr/bin/screen -dmS minecraft /opt/minecraft/server/start
+ExecReload=/usr/bin/screeen -p 0 -S minecraft -X eval 'stuff "reload"\\015'
+ExecStop=/usr/bin/screen -p 0 -S minecraft -X eval 'stuff "say Shutting down in 10 seconds..."\\015'
+ExecStop=/usr/bin/screen -p 0 -S minecraft -X eval 'stuff "save-all"\\015'
+ExecStop=/bin/sleep 10
+ExecStop=/opt/minecraft/server/stop
+ExecStop=/usr/bin/bash -c '/opt/minecraft/server/backup/backup >> /opt/minecraft/server/backup/logs/backup_$$(date +%%Y%%m%%d_%%H_%%M).log 2>&1'
+[Install]
+WantedBy=multi-user.target

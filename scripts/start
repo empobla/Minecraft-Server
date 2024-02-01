@@ -1,0 +1,2 @@
+#!/bin/bash
+java -Xmx7000M -Xms7000M -jar server.jar nogui

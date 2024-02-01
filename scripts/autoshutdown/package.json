@@ -1,0 +1,16 @@
+{
+    "type": "module",
+    "name": "playersonline",
+    "version": "1.0.0",
+    "description": "Check if players are online in the minecraft server",
+    "main": "playersonline.js",
+    "scripts": {
+      "test": "echo \"Error: no test specified\" && exit 1"
+    },
+    "keywords": [],
+    "author": "",
+    "license": "ISC",
+    "dependencies": {
+      "minecraftstatuspinger": "^1.1.5"
+    }
+}
