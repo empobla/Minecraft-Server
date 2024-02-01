@@ -6,9 +6,9 @@ provider:
   runtime: nodejs18.x
   stage: prod
 
-functions:
-  function1:
-    handler: index.handler
+# functions:
+#   function1:
+#     handler: index.handler
 resources:
   Resources:
     MinecraftServerDNS:
@@ -23,7 +23,7 @@ resources:
         ResourceRecords:
           - !Ref MinecraftServerEIP
     MinecraftServerEIP:
-      DepensOn:
+      DependsOn:
         - MinecraftServer
       Type: AWS::EC2::EIP
       Properties:
@@ -44,15 +44,15 @@ resources:
         - MinecraftServerBackupsBucket
       Type: AWS::IAM::Role
       Properties:
+        RoleName: 
+          Fn::Join:
+            - ''
+            - - Ref: AWS::Region
+              - '-'
+              - minecraft-server-role
+        Description: Role for Minecraft Server EC2 Instance
         AssumeRolePolicyDocument:
           Version: '2012-10-17'
-          RoleName: 
-            Fn::Join:
-              - ''
-              - - Ref: AWS::Region
-                - '-'
-                - minecraft-server-role
-          Description: Role for Minecraft Server EC2 Instance
           Statement:
             - Effect: Allow
               Principal:
@@ -100,24 +100,11 @@ resources:
       Properties:
         Roles:
           - !Ref MinecraftServerRole
-    MinecraftServerVolume:
-      Type: AWS::EC2::Volume
-      Properties:
-        AvailabilityZone: us-east-1b
-        Size: 8
-        VolumeType: gp3
-        Tags:
-          - Key: Minecraft Server
-            Value: EC2 Volume
     MinecraftServerSecurityGroup:
       Type: AWS::EC2::SecurityGroup
       Properties:
         GroupDescription: Security group with ports open for MC Server & SSH
         GroupName: Minecraft Server Security Group
-        SecurityGroupEgress:
-          - Description: Allow all traffic out
-            IpProtocol: -1
-            CidrIp: '0.0.0.0/0'
         SecurityGroupIngress:
           - Description: us-east-1 EC2 Instance Connect
             IpProtocol: tcp
@@ -149,14 +136,13 @@ resources:
     MinecraftServer:
       DependsOn:
         - MinecraftServerProfile
-        - MinecraftServerVolume
         - MinecraftServerSecurityGroup
       Type: AWS::EC2::Instance
       Properties:
         AvailabilityZone: us-east-1b
         IamInstanceProfile: !Ref MinecraftServerProfile
         ImageId: ami-07ce5684ee3b5482c
-        InstanceType: t3.large
+        InstanceType: t4g.large
         KeyName: mcserver
         SecurityGroupIds:
           - Ref: MinecraftServerSecurityGroup
@@ -165,9 +151,6 @@ resources:
             Value: EC2 Instance
           - Key: Name
             Value: Minecraft Server
-        Volumes:
-          - Device: /dev/xvda
-            VolumeId: !GetAtt MinecraftServerVolume.VolumeId
         UserData:
           Fn::Base64: !Sub |
             #!/bin/bash
@@ -192,10 +175,10 @@ resources:
 
             # Download NVM
             curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.5/install.sh | bash
-            . ~/.nvm/nvm.sh
+            . .nvm/nvm.sh
 
             # Install NodeJS
-            nvm install --lts
+            nvm install 20.11.0
             
             # Install MC Java server in a directory we create
             adduser minecraft
@@ -210,30 +193,35 @@ resources:
             git clone https://github.com/empobla/Minecraft-Server.git setup
 
             # Move scripts to their appropriate locations
-            mv setup/start start
-            mv setup/stop stop
+            mv setup/scripts/start start
+            mv setup/scripts/stop stop
             
             mkdir backup
             mkdir backup/logs
-            mv setup/backup backup
+            mv setup/scripts/backup backup
             
-            mkdir setup/autoshutdown/logs
-            mv setup/autoshutdown autoshutdown
+            mkdir setup/scripts/autoshutdown/logs
+            mv setup/scripts/autoshutdown autoshutdown
 
-            mv setup/minecraft.service /etc/systemd/system/minecraft.service
-            mv setup/autoshutdown.service /etc/systemd/system/autoshutdown.service
+            mv setup/scripts/minecraft.service /etc/systemd/system/minecraft.service
+            mv setup/scripts/autoshutdown.service /etc/systemd/system/autoshutdown.service
 
             # Add execution permissions to the scripts
             chmod +x start stop backup/backup autoshutdown/autoshutdown
             sleep 1
 
             # Generate Minecraft server files and create script
-            chown -R minecraft:minecraft /opt/minecraft/
             ./start
             sleep 40
+            chown -R minecraft:minecraft /opt/minecraft/
 
             # Accept EULA
             sed -i 's/false/true/p' eula.txt
+
+            # Install depencencies of autoshutdown script
+            cd autoshutdown
+            npm install
+            sleep 40
 
             # Create auto-backup cron job
             (crontab -l 2>/dev/null; echo '0 8 * * * /usr/bin/sh /opt/minecraft/server/backup/backup >> "/opt/minecraft/server/backup/logs/backup_$(/usr/bin/date +\%Y\%m\%d_\%H_\%M).log" 2>&1') | crontab -u minecraft -

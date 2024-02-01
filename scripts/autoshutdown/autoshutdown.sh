@@ -3,7 +3,7 @@
 # Time to wait before shutdown (in minutes)
 shutdown_delay=15
 
-node=~/.nvm/versions/node/v20.11.0/bin/node
+node=/.nvm/versions/node/v20.11.0/bin/node
 
 check_players_online() {
     players_online=$($node ./playersonline.js)
