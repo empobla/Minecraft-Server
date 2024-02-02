@@ -1,5 +1,7 @@
-service: MinecraftServer
+service: minecraft-server
 frameworkVersion: '3'
+
+useDotenv: true
 
 provider:
   name: aws
@@ -11,37 +13,37 @@ provider:
 #     handler: index.handler
 resources:
   Resources:
-    MinecraftServerDNS:
+    ServerDNS:
       DependsOn:
-        - MinecraftServerEIP
+        - ServerEIP
       Type: AWS::Route53::RecordSet
       Properties:
-        HostedZoneId: Z003593719N1GIVWK6JKY
-        Name: minecraft.emilioppv.com
+        HostedZoneId: ${env:DNS_ID}
+        Name: ${env:DNS_NAME}
         Type: A
         TTL: '300'
         ResourceRecords:
-          - !Ref MinecraftServerEIP
-    MinecraftServerEIP:
+          - !Ref ServerEIP
+    ServerEIP:
       DependsOn:
         - MinecraftServer
       Type: AWS::EC2::EIP
       Properties:
         InstanceId: !Ref MinecraftServer
-        NetworkBorderGroup: us-east-1
+        NetworkBorderGroup: ${env:AVAILABILITY_ZONE}
         Tags:
-          - Key: Minecraft Server
+          - Key: minecraft-server
             Value: Elastic IP
-    MinecraftServerBackupsBucket:
+    ServerBackupsBucket:
       Type: AWS::S3::Bucket
       Properties:
-        BucketName: empobla-minecraft-server-backups
+        BucketName: ${env:BUCKET_NAME}
         Tags:
-          - Key: Minecraft Server
+          - Key: minecraft-server
             Value: S3 Backups Bucket
-    MinecraftServerRole:
+    ServerRole:
       DependsOn:
-        - MinecraftServerBackupsBucket
+        - ServerBackupsBucket
       Type: AWS::IAM::Role
       Properties:
         RoleName: 
@@ -74,11 +76,11 @@ resources:
                     - Fn::Join:
                       - ''
                       - - 'arn:aws:s3:::'
-                        - Ref: MinecraftServerBackupsBucket
+                        - Ref: ServerBackupsBucket
                     - Fn::Join:
                       - ''
                       - - 'arn:aws:s3:::'
-                        - Ref: MinecraftServerBackupsBucket
+                        - Ref: ServerBackupsBucket
                         - '/*'
           - PolicyName: minecraft-server-stop-policy
             PolicyDocument:
@@ -91,16 +93,16 @@ resources:
                     StringEquals:
                       ec2:ResourceTag/Name: Minecraft Server
         Tags:
-          - Key: Minecraft Server
+          - Key: minecraft-server
             Value: EC2 Role
-    MinecraftServerProfile:
+    ServerProfile:
       DependsOn:
-        - MinecraftServerRole
+        - ServerRole
       Type: AWS::IAM::InstanceProfile
       Properties:
         Roles:
-          - !Ref MinecraftServerRole
-    MinecraftServerSecurityGroup:
+          - !Ref ServerRole
+    ServerSecurityGroup:
       Type: AWS::EC2::SecurityGroup
       Properties:
         GroupDescription: Security group with ports open for MC Server & SSH
@@ -122,7 +124,7 @@ resources:
             ToPort: 25565
             CidrIp: '0.0.0.0/0'
         Tags:
-          - Key: Minecraft Server
+          - Key: minecraft-server
             Value: EC2 Security Group
     MinecraftKeyPair:
       Type: AWS::EC2::KeyPair
@@ -131,23 +133,23 @@ resources:
         KeyName: mcserver
         KeyType: rsa
         Tags:
-          - Key: Minecraft Server
+          - Key: minecraft-server
             Value: EC2 Key Pair
     MinecraftServer:
       DependsOn:
-        - MinecraftServerProfile
-        - MinecraftServerSecurityGroup
+        - ServerProfile
+        - ServerSecurityGroup
       Type: AWS::EC2::Instance
       Properties:
-        AvailabilityZone: us-east-1b
+        AvailabilityZone: ${env:AVAILABILITY_ZONE}
         IamInstanceProfile: !Ref MinecraftServerProfile
         ImageId: ami-07ce5684ee3b5482c
-        InstanceType: t4g.large
+        InstanceType: ${env:INSTANCE_TYPE}
         KeyName: mcserver
         SecurityGroupIds:
-          - Ref: MinecraftServerSecurityGroup
+          - Ref: ServerSecurityGroup
         Tags:
-          - Key: Minecraft Server
+          - Key: minecraft-server
             Value: EC2 Instance
           - Key: Name
             Value: Minecraft Server
@@ -206,6 +208,8 @@ resources:
             mv setup/scripts/minecraft.service /etc/systemd/system/minecraft.service
             mv setup/scripts/autoshutdown.service /etc/systemd/system/autoshutdown.service
 
+            rm -rf setup
+
             # Add execution permissions to the scripts
             chmod +x start stop backup/backup autoshutdown/autoshutdown
             sleep 1
@@ -216,7 +220,10 @@ resources:
             chown -R minecraft:minecraft /opt/minecraft/
 
             # Accept EULA
-            sed -i 's/false/true/p' eula.txt
+            sed -i 's/false/true/' eula.txt
+
+            # Setup backup S3 bucket
+            sed -i 's/bucket_name/'${env:BUCKET_NAME}'/' backup/backup
 
             # Install depencencies of autoshutdown script
             cd autoshutdown

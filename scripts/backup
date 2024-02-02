@@ -1,5 +1,5 @@
 #!/bin/bash
 FILENAME=backup_$(date +%Y%m%d_%H_%M).zip
 zip -r $FILENAME /opt/minecraft/server/world
-aws s3 cp $FILENAME s3://empobla-minecraft-server-backups/$FILENAME
+aws s3 cp $FILENAME s3://bucket_name/$FILENAME
 rm -rf $FILENAME
